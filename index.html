@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2748d9">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Mes Mots">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Mes Mots</title>
+<style>
+/* Layout: one narrow column for the phone; folders as a scrolling row of chips, then study cards or the word list. System fonts only, so nothing is fetched online. */
+:root {
+  color-scheme: light;
+  --display: ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --body: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --bg: #f3f5fa;
+  --surface: #ffffff;
+  --ink: #141b34;
+  --muted: #5b6480;
+  --line: #dde2ee;
+  --accent: #2748d9;
+  --accent-ink: #ffffff;
+  --accent-soft: #e6ebfd;
+  --warn: #b3261e;
+  --ok: #1b7a4b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0f1426; --surface: #171e36; --ink: #e9ecf8; --muted: #98a1c0; --line: #2a3354;
+    --accent: #7f97ff; --accent-ink: #0f1426; --accent-soft: #212b52; --warn: #ff8a80; --ok: #5fd39a;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.5;
+  min-height: 100vh;
+  padding-top: max(16px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(40px, calc(env(safe-area-inset-bottom, 0px) + 24px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+button, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, p { margin: 0; }
+[hidden] { display: none !important; }
+
+.app { max-width: 620px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.top h1 { font-family: var(--display); font-size: 1.75rem; font-weight: 700; letter-spacing: -0.01em; }
+.sub { font-size: 0.8125rem; color: var(--muted); }
+
+.btn {
+  appearance: none; cursor: pointer; border: 1px solid var(--line); background: var(--surface);
+  padding: 9px 14px; border-radius: 8px; font-size: 0.9375rem; font-weight: 500; line-height: 1.2;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.danger { color: var(--warn); }
+.btn.big { padding: 13px 22px; font-size: 1rem; }
+
+.chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+.chip {
+  appearance: none; cursor: pointer; flex: none; display: inline-flex; gap: 8px; align-items: center;
+  border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 8px 14px; white-space: nowrap;
+}
+.chip.on { background: var(--accent-soft); border-color: var(--accent); font-weight: 600; }
+.chip .n { font-size: 0.8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tab {
+  appearance: none; cursor: pointer; background: none; border: 0; border-bottom: 3px solid transparent;
+  padding: 8px 16px; font-weight: 600; color: var(--muted); margin-bottom: -1px;
+}
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+
+.empty { padding: 24px 0; display: flex; flex-direction: column; gap: 12px; align-items: flex-start; color: var(--muted); }
+.empty strong { color: var(--ink); font-family: var(--display); font-size: 1.25rem; font-weight: 600; }
+
+.study { display: flex; flex-direction: column; gap: 16px; }
+.progress { font-size: 0.9375rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.card-wrap { perspective: 1200px; }
+.card { appearance: none; border: 0; background: none; padding: 0; width: 100%; display: block; cursor: pointer; text-align: left; }
+.card-inner { display: grid; transition: transform 0.5s; transform-style: preserve-3d; }
+.card.flipped .card-inner { transform: rotateY(180deg); }
+.face {
+  grid-area: 1 / 1; min-height: 280px; backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  border: 1px solid var(--line); border-radius: 14px; padding: 26px 22px;
+  display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 10px; background: var(--surface);
+}
+.face.back { transform: rotateY(180deg); background: var(--accent-soft); border-color: var(--accent); }
+.tag { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.big { font-family: var(--display); font-size: clamp(1.9rem, 8vw, 2.6rem); font-weight: 700; line-height: 1.15; overflow-wrap: anywhere; text-wrap: balance; }
+.phon { font-size: 1.125rem; color: var(--accent); overflow-wrap: anywhere; }
+.example { font-size: 1.0625rem; overflow-wrap: anywhere; padding-top: 6px; }
+.ex-tr { font-size: 0.9375rem; color: var(--muted); overflow-wrap: anywhere; font-style: italic; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.audio-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.icon-btn {
+  appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line);
+  background: var(--surface); border-radius: 8px; padding: 9px 12px; font-size: 0.9375rem; font-weight: 500; line-height: 1.2;
+}
+.icon-btn svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.icon-btn.sm { padding: 5px 8px; }
+.icon-btn.sm svg { width: 16px; height: 16px; }
+.opts { display: flex; gap: 8px 20px; flex-wrap: wrap; font-size: 0.9375rem; color: var(--muted); }
+.opts label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+.opts input { accent-color: var(--accent); width: 18px; height: 18px; }
+.done { padding: 24px 0; display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.done strong { font-family: var(--display); font-size: 1.5rem; font-weight: 700; }
+
+.words { display: flex; flex-direction: column; gap: 14px; }
+input[type="text"], textarea {
+  width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 16px;
+}
+textarea { resize: vertical; min-height: 96px; }
+.word-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.word { display: flex; flex-direction: column; gap: 4px; padding: 14px 0; border-top: 1px solid var(--line); }
+.word:first-child { border-top: 0; }
+.w-main { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; overflow-wrap: anywhere; }
+.w-front { font-weight: 600; }
+.w-arrow { color: var(--muted); }
+.w-back { font-family: var(--display); font-size: 1.1875rem; font-weight: 600; color: var(--accent); }
+.w-phon, .w-trn { font-size: 0.9375rem; color: var(--muted); overflow-wrap: anywhere; }
+.w-trn { font-style: italic; }
+.w-ex { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.9375rem; overflow-wrap: anywhere; }
+.msg { font-size: 0.9375rem; color: var(--muted); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.panel h2 { font-family: var(--display); font-size: 1.125rem; font-weight: 600; }
+.panel details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
+.panel details[open] summary { margin-bottom: 10px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: 0.9375rem; max-width: calc(100% - 32px); z-index: 20; }
+
+@media (prefers-reduced-motion: reduce) { .card-inner { transition: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Mes Mots</h1>
+      <p class="sub" id="libInfo"></p>
+    </div>
+    <button type="button" class="btn" id="importToggle">Importă</button>
+  </header>
+
+  <section class="panel" id="importPanel" hidden>
+    <h2>Importă biblioteca</h2>
+    <p class="msg">Pe laptop sau în pagina Mes Mots din Claude, apasă „Copie de rezervă" și salvează fișierul. Apoi alege-l aici. Biblioteca de pe acest telefon se înlocuiește cu cea din fișier.</p>
+    <div class="row">
+      <button type="button" class="btn primary" id="pickFile">Alege fișierul</button>
+      <input type="file" id="importFile" accept=".json,application/json,text/plain" hidden>
+    </div>
+    <details>
+      <summary>Sau lipește textul copiat</summary>
+      <textarea id="pasteBox" placeholder="Lipește aici conținutul copiei de rezervă" aria-label="Textul copiei de rezervă"></textarea>
+      <div class="row" style="margin-top:10px"><button type="button" class="btn" id="pasteGo">Verifică textul</button></div>
+    </details>
+    <div id="confirmBox" hidden>
+      <p class="msg" id="confirmText"></p>
+      <div class="row" style="margin-top:10px">
+        <button type="button" class="btn primary" id="confirmYes">Înlocuiește biblioteca</button>
+        <button type="button" class="btn" id="confirmNo">Anulează</button>
+      </div>
+    </div>
+  </section>
+
+  <nav class="chips" id="chips" aria-label="Foldere"></nav>
+
+  <div class="tabs" role="tablist">
+    <button type="button" class="tab" role="tab" id="tabStudy" aria-selected="true">Învață</button>
+    <button type="button" class="tab" role="tab" id="tabWords" aria-selected="false">Cuvinte</button>
+  </div>
+
+  <section id="studyView" aria-labelledby="tabStudy"></section>
+
+  <section id="wordsView" class="words" aria-labelledby="tabWords" hidden>
+    <input type="text" id="search" placeholder="Caută în folder" aria-label="Caută cuvinte" autocomplete="off">
+    <ul class="word-list" id="wordList"></ul>
+    <p class="msg" id="wordsEmpty" hidden></p>
+  </section>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function h(tag, props) {
+    var el = document.createElement(tag);
+    if (props) {
+      Object.keys(props).forEach(function (k) {
+        var v = props[k];
+        if (v === null || v === undefined || v === false) return;
+        if (k === 'class') el.className = v;
+        else if (k === 'text') el.textContent = v;
+        else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);
+        else if (v === true) el.setAttribute(k, '');
+        else el.setAttribute(k, v);
+      });
+    }
+    for (var i = 2; i < arguments.length; i++) {
+      var kid = arguments[i];
+      if (kid === null || kid === undefined || kid === false) continue;
+      el.append(kid);
+    }
+    return el;
+  }
+
+  function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+  function shuffle(a) {
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+  function plural(n) {
+    var m = n % 100;
+    if (n === 1) return '1 cuvânt';
+    if (n === 0) return '0 cuvinte';
+    return (m === 0 || m >= 20) ? n + ' de cuvinte' : n + ' cuvinte';
+  }
+
+  /* ---------- storage on this phone ---------- */
+  var LIB_KEY = 'mes-mots-offline-lib-v1', PREF_KEY = 'mes-mots-offline-prefs-v1';
+  function lsRead(k) { try { var s = localStorage.getItem(k); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+  function lsWrite(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
+
+  var lib = lsRead(LIB_KEY);
+  if (!lib || !Array.isArray(lib.folders) || !Array.isArray(lib.cards)) lib = { folders: [], cards: [], importedAt: 0 };
+  var prefs = Object.assign({ folder: null, reverse: false, shuffle: true, tab: 'study' }, lsRead(PREF_KEY) || {});
+  function savePrefs() { lsWrite(PREF_KEY, prefs); }
+
+  function curFolder() {
+    for (var i = 0; i < lib.folders.length; i++) if (lib.folders[i].id === prefs.folder) return lib.folders[i];
+    return null;
+  }
+  function fixCurrent() {
+    if (!curFolder()) { prefs.folder = lib.folders.length ? lib.folders[0].id : null; savePrefs(); }
+  }
+  function cardsIn(fid) { return lib.cards.filter(function (c) { return c.folder === fid; }); }
+  function cardById(id) { for (var i = 0; i < lib.cards.length; i++) if (lib.cards[i].id === id) return lib.cards[i]; return null; }
+
+  var toastTimer;
+  function toast(text) {
+    var el = $('toast');
+    el.textContent = text; el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.hidden = true; }, 4000);
+  }
+
+  /* ---------- text to speech (uses a French voice installed on the phone, works offline) ---------- */
+  var TTS_OK = 'speechSynthesis' in window && typeof window.SpeechSynthesisUtterance === 'function';
+
+  function speakerIcon() {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    ['M4 9v6h4l5 4V5L8 9H4z', 'M16 9a4 4 0 0 1 0 6', 'M18.5 6.5a8 8 0 0 1 0 11'].forEach(function (d) {
+      var p = document.createElementNS(ns, 'path');
+      p.setAttribute('d', d);
+      svg.append(p);
+    });
+    return svg;
+  }
+
+  function speakBtn(label, text, id, small) {
+    return h('button', { type: 'button', class: 'icon-btn' + (small ? ' sm' : ''), id: id || null, 'aria-label': label, title: label,
+      onclick: function () { speak(text); } }, speakerIcon(), small ? null : label);
+  }
+
+  function pickFrVoice(list) {
+    var fr = null;
+    for (var i = 0; i < list.length; i++) {
+      var l = String(list[i].lang || '').toLowerCase().replace('_', '-');
+      if (l === 'fr-fr') return list[i];
+      if (!fr && l.indexOf('fr') === 0) fr = list[i];
+    }
+    return fr;
+  }
+
+  function speak(text) {
+    if (!TTS_OK || !text) return;
+    var synth = window.speechSynthesis;
+    var list = [];
+    try { list = synth.getVoices() || []; } catch (e) { list = []; }
+    var voice = pickFrVoice(list);
+    if (list.length && !voice) {
+      toast('Nu am găsit o voce franceză pe acest telefon. O poți adăuga din Setări, Accesibilitate, Conținut vorbit, Voci.');
+      return;
+    }
+    try { synth.cancel(); } catch (e) { /* nothing to cancel */ }
+    var u = new window.SpeechSynthesisUtterance(text);
+    u.lang = 'fr-FR';
+    if (voice) u.voice = voice;
+    u.rate = 0.9;
+    u.onerror = function (ev) {
+      if (ev && (ev.error === 'interrupted' || ev.error === 'canceled')) return;
+      toast('Nu am putut reda sunetul.');
+    };
+    try { synth.speak(u); } catch (e) { toast('Nu am putut reda sunetul.'); }
+  }
+
+  /* ---------- folders ---------- */
+  function renderInfo() {
+    var el = $('libInfo');
+    if (!lib.cards.length) { el.textContent = 'Nicio bibliotecă importată încă'; return; }
+    var d = lib.importedAt ? new Date(lib.importedAt) : null;
+    var when = d && !isNaN(d) ? ' · importat ' + d.toLocaleDateString('ro-RO', { day: 'numeric', month: 'short' }) : '';
+    el.textContent = plural(lib.cards.length) + when;
+  }
+
+  function renderChips() {
+    var nav = $('chips');
+    nav.textContent = '';
+    nav.hidden = lib.folders.length < 1;
+    lib.folders.forEach(function (f) {
+      var on = f.id === prefs.folder;
+      nav.append(h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), 'aria-current': on ? 'true' : null,
+        onclick: function () { prefs.folder = f.id; savePrefs(); session = null; $('search').value = ''; renderAll(); } },
+        f.name, h('span', { class: 'n', text: String(cardsIn(f.id).length) })));
+    });
+  }
+
+  /* ---------- tabs ---------- */
+  function setTab(t) { prefs.tab = t; savePrefs(); renderTabs(); if (t === 'study') renderStudy(); }
+  function renderTabs() {
+    var study = prefs.tab !== 'words';
+    $('tabStudy').setAttribute('aria-selected', study ? 'true' : 'false');
+    $('tabWords').setAttribute('aria-selected', study ? 'false' : 'true');
+    $('studyView').hidden = !study;
+    $('wordsView').hidden = study;
+  }
+  $('tabStudy').addEventListener('click', function () { setTab('study'); });
+  $('tabWords').addEventListener('click', function () { setTab('words'); });
+
+  /* ---------- study ---------- */
+  var session = null;
+
+  function startSession() {
+    var ids = cardsIn(prefs.folder).map(function (c) { return c.id; });
+    if (prefs.shuffle) shuffle(ids);
+    session = { folder: prefs.folder, queue: ids, flipped: false, total: ids.length, again: 0 };
+  }
+
+  function setFlipped(v) {
+    if (!session) return;
+    session.flipped = v;
+    var card = $('flipCard');
+    if (!card) return;
+    card.classList.toggle('flipped', v);
+    var f = card.querySelector('.front'), b = card.querySelector('.back');
+    if (f) f.setAttribute('aria-hidden', v ? 'true' : 'false');
+    if (b) b.setAttribute('aria-hidden', v ? 'false' : 'true');
+    $('showBtn').hidden = v;
+    $('answerRow').hidden = !v;
+    var wa = $('wordAudio'), sa = $('sentAudio');
+    if (wa) wa.hidden = !(v || prefs.reverse);
+    if (sa) sa.hidden = !v;
+  }
+
+  function answer(known) {
+    if (!session || !session.queue.length) return;
+    var id = session.queue.shift();
+    if (!known) { session.again++; session.queue.push(id); }
+    session.flipped = false;
+    renderStudy();
+  }
+
+  function importHint() {
+    return h('button', { type: 'button', class: 'btn primary', text: 'Importă biblioteca', onclick: function () { $('importPanel').hidden = false; $('importPanel').scrollIntoView({ block: 'nearest' }); } });
+  }
+
+  function renderStudy() {
+    var box = $('studyView');
+    box.textContent = '';
+    if (!lib.folders.length) {
+      box.append(h('div', { class: 'empty' }, h('strong', { text: 'Încă nu ai cuvinte aici' }),
+        h('p', { text: 'Importă copia de rezervă din Mes Mots (butonul „Copie de rezervă"). După aceea poți învăța și fără internet.' }),
+        importHint()));
+      return;
+    }
+    var f = curFolder();
+    var cards = cardsIn(f.id);
+    if (!cards.length) {
+      box.append(h('div', { class: 'empty' }, h('strong', { text: 'Folderul e gol' }),
+        h('p', { text: 'Alege alt folder sau importă o copie de rezervă nouă.' })));
+      return;
+    }
+    if (!session || session.folder !== f.id) startSession();
+    session.queue = session.queue.filter(function (id) { return !!cardById(id); });
+
+    if (!session.queue.length) {
+      box.append(h('div', { class: 'done' },
+        h('strong', { text: 'Gata, ai terminat folderul' }),
+        h('p', { text: 'Ai parcurs ' + plural(session.total) + '. Ai apăsat „Mai repet" de ' + session.again + (session.again === 1 ? ' dată.' : ' ori.') }),
+        h('button', { type: 'button', class: 'btn primary big', text: 'Începe din nou', onclick: function () { startSession(); renderStudy(); } })));
+      return;
+    }
+
+    var c = cardById(session.queue[0]);
+    var rev = prefs.reverse;
+    var front = h('div', { class: 'face front', 'aria-hidden': 'false' },
+      h('span', { class: 'tag', text: rev ? 'Franceză' : 'Română / engleză' }),
+      h('p', { class: 'big', text: rev ? c.back : c.front }),
+      rev && c.phon ? h('p', { class: 'phon', text: c.phon }) : null);
+    var back = h('div', { class: 'face back', 'aria-hidden': 'true' },
+      h('span', { class: 'tag', text: rev ? 'Română / engleză' : 'Franceză' }),
+      h('p', { class: 'big', text: rev ? c.front : c.back }),
+      !rev && c.phon ? h('p', { class: 'phon', text: c.phon }) : null,
+      c.example ? h('p', { class: 'example', lang: 'fr', text: c.example }) : null,
+      c.example && c.exTr ? h('p', { class: 'ex-tr', text: c.exTr }) : null);
+
+    var card = h('button', { type: 'button', class: 'card', id: 'flipCard', 'aria-label': 'Întoarce cardul', onclick: function () { setFlipped(!session.flipped); } },
+      h('div', { class: 'card-inner' }, front, back));
+
+    var showBtn = h('button', { type: 'button', class: 'btn primary big', id: 'showBtn', text: 'Arată răspunsul', onclick: function () { setFlipped(true); } });
+    var answerRow = h('div', { class: 'actions', id: 'answerRow', hidden: true },
+      h('button', { type: 'button', class: 'btn big danger', text: 'Mai repet', onclick: function () { answer(false); } }),
+      h('button', { type: 'button', class: 'btn big primary', text: 'Știam', onclick: function () { answer(true); } }));
+
+    var audioRow = TTS_OK ? h('div', { class: 'audio-row' },
+      speakBtn('Ascultă cuvântul', c.back, 'wordAudio', false),
+      c.example ? speakBtn('Ascultă propoziția', c.example, 'sentAudio', false) : null) : null;
+
+    var optRev = h('input', { type: 'checkbox', id: 'optRev', checked: rev ? true : null });
+    optRev.addEventListener('change', function () { prefs.reverse = optRev.checked; savePrefs(); renderStudy(); });
+    var optShuf = h('input', { type: 'checkbox', id: 'optShuf', checked: prefs.shuffle ? true : null });
+    optShuf.addEventListener('change', function () { prefs.shuffle = optShuf.checked; savePrefs(); startSession(); renderStudy(); });
+
+    box.append(h('div', { class: 'study' },
+      h('p', { class: 'progress', text: 'Mai ai ' + plural(session.queue.length) + ' de văzut' }),
+      h('div', { class: 'card-wrap' }, card),
+      h('div', { class: 'actions' }, showBtn, answerRow),
+      audioRow,
+      h('div', { class: 'opts' },
+        h('label', null, optRev, 'Începe cu franceza'),
+        h('label', null, optShuf, 'Amestecă cardurile'))));
+    setFlipped(session.flipped);
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (prefs.tab === 'words' || !session || !session.queue.length) return;
+    var t = e.target && e.target.tagName;
+    if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || t === 'BUTTON') return;
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setFlipped(!session.flipped); }
+    else if (e.key === 'ArrowRight' && session.flipped) answer(true);
+    else if (e.key === 'ArrowLeft' && session.flipped) answer(false);
+  });
+
+  /* ---------- word list ---------- */
+  function renderWords() {
+    var list = $('wordList'), empty = $('wordsEmpty');
+    list.textContent = '';
+    var f = curFolder();
+    if (!f) { empty.hidden = false; empty.textContent = 'Nu există cuvinte încă. Importă o copie de rezervă.'; $('search').hidden = true; return; }
+    var all = cardsIn(f.id);
+    $('search').hidden = all.length < 2;
+    var q = norm($('search').value.trim());
+    var shown = q ? all.filter(function (c) { return norm(c.front + ' ' + c.back + ' ' + (c.example || '')).indexOf(q) !== -1; }) : all;
+    if (!shown.length) {
+      empty.hidden = false;
+      empty.textContent = all.length ? 'Niciun cuvânt nu se potrivește cu căutarea.' : 'Folderul e gol.';
+    } else empty.hidden = true;
+    shown.forEach(function (c) {
+      list.append(h('li', { class: 'word' },
+        h('div', { class: 'w-main' },
+          h('span', { class: 'w-front', text: c.front }),
+          h('span', { class: 'w-arrow', 'aria-hidden': 'true', text: '→' }),
+          h('span', { class: 'w-back', lang: 'fr', text: c.back }),
+          TTS_OK ? speakBtn('Ascultă cuvântul: ' + c.back, c.back, null, true) : null),
+        c.phon ? h('div', { class: 'w-phon', text: c.phon }) : null,
+        c.example ? h('div', { class: 'w-ex' },
+          h('span', { lang: 'fr', text: c.example }),
+          TTS_OK ? speakBtn('Ascultă propoziția', c.example, null, true) : null) : null,
+        c.example && c.exTr ? h('div', { class: 'w-trn', text: c.exTr }) : null));
+    });
+  }
+  $('search').addEventListener('input', renderWords);
+
+  /* ---------- import ---------- */
+  var pending = null;
+
+  function sanitize(d) {
+    var s = function (v, n) { return typeof v === 'string' ? v.trim().slice(0, n) : ''; };
+    var folders = [], ids = {};
+    d.folders.forEach(function (f) {
+      if (f && typeof f.id === 'string' && f.id && !ids[f.id]) {
+        ids[f.id] = true;
+        folders.push({ id: f.id.slice(0, 40), name: s(f.name, 60) || 'Folder' });
+      }
+    });
+    var cards = [], seen = {};
+    d.cards.forEach(function (c) {
+      if (c && typeof c.id === 'string' && c.id && !seen[c.id] && ids[c.folder] && s(c.front, 1) && s(c.back, 1)) {
+        seen[c.id] = true;
+        cards.push({ id: c.id.slice(0, 40), folder: c.folder, front: s(c.front, 200), back: s(c.back, 200), phon: s(c.phon, 200), example: s(c.example, 500), exTr: s(c.exTr, 500) });
+      }
+    });
+    return { folders: folders, cards: cards };
+  }
+
+  function proposeImport(text) {
+    try {
+      var d = JSON.parse(String(text));
+      if (!d || !Array.isArray(d.folders) || !Array.isArray(d.cards)) throw new Error('shape');
+      var clean = sanitize(d);
+      if (!clean.cards.length) throw new Error('empty');
+      pending = clean;
+      $('confirmText').textContent = 'Fișierul are ' + clean.folders.length + (clean.folders.length === 1 ? ' folder' : ' foldere') + ' și ' + plural(clean.cards.length) +
+        '. Biblioteca de pe acest telefon va fi înlocuită.';
+      $('confirmBox').hidden = false;
+    } catch (e) {
+      pending = null;
+      $('confirmBox').hidden = true;
+      toast('Textul nu pare a fi o copie de rezervă Mes Mots.');
+    }
+  }
+
+  $('importToggle').addEventListener('click', function () {
+    var p = $('importPanel');
+    p.hidden = !p.hidden;
+    if (p.hidden) { pending = null; $('confirmBox').hidden = true; }
+  });
+  $('pickFile').addEventListener('click', function () { $('importFile').click(); });
+  $('importFile').addEventListener('change', function (e) {
+    var file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () { proposeImport(reader.result); };
+    reader.onerror = function () { toast('Nu am putut citi fișierul.'); };
+    reader.readAsText(file);
+  });
+  $('pasteGo').addEventListener('click', function () { proposeImport($('pasteBox').value); });
+  $('confirmNo').addEventListener('click', function () { pending = null; $('confirmBox').hidden = true; });
+  $('confirmYes').addEventListener('click', function () {
+    if (!pending) return;
+    var next = { folders: pending.folders, cards: pending.cards, importedAt: Date.now() };
+    if (!lsWrite(LIB_KEY, next)) { toast('Nu am putut salva pe acest telefon. Verifică spațiul liber.'); return; }
+    lib = next;
+    pending = null; session = null;
+    $('confirmBox').hidden = true; $('importPanel').hidden = true; $('pasteBox').value = '';
+    fixCurrent();
+    renderAll();
+    toast('Gata: ' + plural(lib.cards.length) + ' pe acest telefon.');
+  });
+
+  /* ---------- go ---------- */
+  function renderAll() { renderInfo(); renderChips(); renderTabs(); renderStudy(); renderWords(); }
+
+  fixCurrent();
+  renderAll();
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () { /* works online anyway */ });
+    });
+  }
+})();
+</script>
+</body>
+</html>
