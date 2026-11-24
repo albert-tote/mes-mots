@@ -146,6 +146,27 @@ textarea { resize: vertical; min-height: 96px; }
 
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: 0.9375rem; max-width: calc(100% - 32px); z-index: 20; }
 
+.folder-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 16px; }
+.f-title { font-family: var(--display); font-size: 1.5rem; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; text-wrap: balance; }
+.f-count { color: var(--muted); font-size: 0.9375rem; font-variant-numeric: tabular-nums; }
+select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; min-width: 0; max-width: 100%; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.day-bar { display: flex; gap: 8px; align-items: center; max-width: 100%; }
+.day-bar select { flex: 1; min-width: 0; }
+.folder.deck, .chip.deck { border-color: var(--accent); }
+.w-rank { font-size: 0.8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.type-form { display: flex; flex-direction: column; gap: 10px; }
+.type-row { display: flex; gap: 8px; }
+.type-row input { flex: 1; min-width: 0; }
+.accents { display: flex; gap: 6px; flex-wrap: wrap; }
+.accent-key { appearance: none; cursor: pointer; min-width: 40px; padding: 8px 0; text-align: center; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; font-size: 1rem; font-weight: 600; }
+.accent-key:hover { border-color: var(--accent); }
+.result { padding: 10px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 1rem; overflow-wrap: anywhere; }
+.result.ok { border-color: var(--ok); color: var(--ok); }
+.result.near { border-color: var(--accent); }
+.result.bad { border-color: var(--warn); color: var(--warn); }
+.opts label.off { opacity: 0.5; cursor: default; }
+
 @media (prefers-reduced-motion: reduce) { .card-inner { transition: none; } }
 </style>
 </head>
@@ -181,6 +202,8 @@ textarea { resize: vertical; min-height: 96px; }
   </section>
 
   <nav class="chips" id="chips" aria-label="Foldere"></nav>
+
+  <div class="folder-head" id="folderHead"></div>
 
   <div class="tabs" role="tablist">
     <button type="button" class="tab" role="tab" id="tabStudy" aria-selected="true">Învață</button>
@@ -240,24 +263,156 @@ textarea { resize: vertical; min-height: 96px; }
   }
 
   /* ---------- storage on this phone ---------- */
-  var LIB_KEY = 'mes-mots-offline-lib-v1', PREF_KEY = 'mes-mots-offline-prefs-v1';
+  var LIB_KEY = 'mes-mots-offline-lib-v1', PREF_KEY = 'mes-mots-offline-prefs-v1', PLAN_KEY = 'mes-mots-offline-plan-v1';
   function lsRead(k) { try { var s = localStorage.getItem(k); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
   function lsWrite(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
 
   var lib = lsRead(LIB_KEY);
   if (!lib || !Array.isArray(lib.folders) || !Array.isArray(lib.cards)) lib = { folders: [], cards: [], importedAt: 0 };
-  var prefs = Object.assign({ folder: null, reverse: false, shuffle: true, tab: 'study' }, lsRead(PREF_KEY) || {});
+  var prefs = Object.assign({ folder: null, reverse: false, shuffle: true, typing: false, tab: 'study' }, lsRead(PREF_KEY) || {});
   function savePrefs() { lsWrite(PREF_KEY, prefs); }
 
+  var plan = lsRead(PLAN_KEY);
+  if (!plan || typeof plan !== 'object') plan = { day: 1, done: {} };
+  if (!plan.done || typeof plan.done !== 'object') plan.done = {};
+  function getPlan() { return plan; }
+  function savePlan() { lsWrite(PLAN_KEY, plan); }
+  function ownData() { return lib; }
+  var session = null;
+
+  /* ---------- built-in list: the 1500 most frequent words, 30 per day ---------- */
+  var DECK_ID = '__deck1500', DAY_SIZE = 30, MAX_DAYS = 50;
+  var DECK = null, deckMap = {}, deckState = 'loading';
+  var DECK_FOLDER = { id: DECK_ID, name: 'Primele 1500 de cuvinte', deck: true };
+
   function curFolder() {
-    for (var i = 0; i < lib.folders.length; i++) if (lib.folders[i].id === prefs.folder) return lib.folders[i];
+    if (prefs.folder === DECK_ID) return DECK_FOLDER;
+    var fs = ownData().folders;
+    for (var i = 0; i < fs.length; i++) if (fs[i].id === prefs.folder) return fs[i];
     return null;
   }
   function fixCurrent() {
-    if (!curFolder()) { prefs.folder = lib.folders.length ? lib.folders[0].id : null; savePrefs(); }
+    if (prefs.folder === DECK_ID) return;
+    if (!curFolder()) { prefs.folder = DECK_ID; savePrefs(); }
   }
-  function cardsIn(fid) { return lib.cards.filter(function (c) { return c.folder === fid; }); }
-  function cardById(id) { for (var i = 0; i < lib.cards.length; i++) if (lib.cards[i].id === id) return lib.cards[i]; return null; }
+  function cardsIn(fid) {
+    if (fid === DECK_ID) return dayCards(curDay());
+    return ownData().cards.filter(function (c) { return c.folder === fid; });
+  }
+  function cardById(id) {
+    var cs = ownData().cards;
+    for (var i = 0; i < cs.length; i++) if (cs[i].id === id) return cs[i];
+    return deckMap[id] || null;
+  }
+
+  function totalDays() { return DECK ? Math.ceil(DECK.length / DAY_SIZE) : MAX_DAYS; }
+  function curDay() {
+    var n = Math.floor(Number(getPlan().day)) || 1;
+    return Math.min(Math.max(1, n), totalDays());
+  }
+  function dayCards(n) { return DECK ? DECK.slice((n - 1) * DAY_SIZE, n * DAY_SIZE) : []; }
+  function dayRange(n) {
+    var a = (n - 1) * DAY_SIZE + 1, b = Math.min(n * DAY_SIZE, DECK ? DECK.length : 1500);
+    return a + '–' + b;
+  }
+
+  function loadDeck() {
+    fetch('deck.json').then(function (r) {
+      if (!r.ok) throw new Error('http ' + r.status);
+      return r.json();
+    }).then(function (rows) {
+      if (!Array.isArray(rows) || !rows.length) throw new Error('empty');
+      DECK = rows.map(function (r) { return { id: 'd' + r[0], rank: r[0], back: r[1], front: r[2], phon: r[3], example: r[4], exTr: r[5] }; });
+      DECK.forEach(function (c) { deckMap[c.id] = c; });
+      deckState = 'ready'; session = null;
+      renderAll();
+    }).catch(function () {
+      deckState = 'error';
+      renderAll();
+    });
+  }
+
+  function setDay(d) {
+    var n = Math.min(Math.max(1, d), totalDays());
+    getPlan().day = n;
+    savePlan();
+    session = null;
+    $('search').value = '';
+    renderAll();
+  }
+
+  function markDayDone(d) {
+    var p = getPlan();
+    if (!p.done[d]) { p.done[d] = true; savePlan(); renderHead(); renderFolders(); }
+  }
+
+  function renderDeckHead(box) {
+    var day = curDay(), n = totalDays(), done = !!getPlan().done[day];
+    var sel = h('select', { id: 'daySel', 'aria-label': 'Alege ziua' });
+    for (var d = 1; d <= n; d++) {
+      var o = h('option', { value: String(d), text: 'Ziua ' + d + ' · ' + dayRange(d) + (getPlan().done[d] ? ' ✓' : '') });
+      if (d === day) o.selected = true;
+      sel.append(o);
+    }
+    sel.addEventListener('change', function () { setDay(Number(sel.value)); });
+    box.append(
+      h('div', null,
+        h('h2', { class: 'f-title', text: 'Primele 1500 de cuvinte' }),
+        h('p', { class: 'f-count', text: 'Ziua ' + day + ' din ' + n + ' · cuvintele ' + dayRange(day) + (done ? ' · terminată ✓' : '') })),
+      h('div', { class: 'day-bar' },
+        h('button', { type: 'button', class: 'btn', text: '‹', 'aria-label': 'Ziua anterioară', disabled: day <= 1, onclick: function () { setDay(day - 1); } }),
+        sel,
+        h('button', { type: 'button', class: 'btn', text: '›', 'aria-label': 'Ziua următoare', disabled: day >= n, onclick: function () { setDay(day + 1); } })));
+  }
+
+  function deckFolderItem(asChip) {
+    var on = prefs.folder === DECK_ID;
+    var label = asChip ? '1500 de cuvinte' : 'Primele 1500';
+    var cnt = 'Ziua ' + curDay();
+    if (asChip) {
+      return h('button', { type: 'button', class: 'chip deck' + (on ? ' on' : ''), 'aria-current': on ? 'true' : null, onclick: function () { selectFolder(DECK_ID); } },
+        label, h('span', { class: 'n', text: cnt }));
+    }
+    return h('li', null,
+      h('button', { type: 'button', class: 'folder deck' + (on ? ' on' : ''), 'aria-current': on ? 'true' : null, onclick: function () { selectFolder(DECK_ID); } },
+        h('span', { class: 'fname', text: label }),
+        h('span', { class: 'count', text: cnt })));
+  }
+
+  function wordLi(c, actions) {
+    return h('li', { class: 'word' },
+      h('div', { class: 'w-main' },
+        c.rank ? h('span', { class: 'w-rank', text: '#' + c.rank }) : null,
+        h('span', { class: 'w-front', text: c.front }),
+        h('span', { class: 'w-arrow', 'aria-hidden': 'true', text: '→' }),
+        h('span', { class: 'w-back', lang: 'fr', text: c.back }),
+        TTS_OK ? speakBtn('Ascultă cuvântul: ' + c.back, c.back, null, true) : null),
+      c.phon ? h('div', { class: 'w-phon', text: c.phon }) : null,
+      c.example ? h('div', { class: 'w-ex' },
+        h('span', { lang: 'fr', text: c.example }),
+        TTS_OK ? speakBtn('Ascultă propoziția', c.example, null, true) : null) : null,
+      c.example && c.exTr ? h('div', { class: 'w-trn', text: c.exTr }) : null,
+      actions || null);
+  }
+
+  /* the words tab for the built-in list: this day's words, or a search over all 1500 */
+  function renderDeckWords(list, empty) {
+    var sr = $('searchRow');
+    if (sr) sr.hidden = false;
+    $('search').placeholder = 'Caută în toate cele 1500 de cuvinte';
+    if (deckState !== 'ready') {
+      empty.hidden = false;
+      empty.textContent = deckState === 'error' ? 'Lista nu s-a încărcat. Verifică conexiunea la internet și reîncarcă pagina.' : 'Se încarcă lista…';
+      return;
+    }
+    var q = norm($('search').value.trim());
+    var pool = q ? DECK.filter(function (c) { return norm(c.front + ' ' + c.back).indexOf(q) !== -1; }) : dayCards(curDay());
+    var shown = pool.slice(0, 60);
+    shown.forEach(function (c) { list.append(wordLi(c, null)); });
+    if (!shown.length) { empty.hidden = false; empty.textContent = 'Niciun cuvânt nu se potrivește cu căutarea.'; }
+    else if (pool.length > shown.length) { empty.hidden = false; empty.textContent = 'Sunt ' + pool.length + ' rezultate. Se arată primele 60.'; }
+    else { empty.hidden = true; }
+  }
 
   var toastTimer;
   function toast(text) {
@@ -323,22 +478,35 @@ textarea { resize: vertical; min-height: 96px; }
   /* ---------- folders ---------- */
   function renderInfo() {
     var el = $('libInfo');
-    if (!lib.cards.length) { el.textContent = 'Nicio bibliotecă importată încă'; return; }
+    if (!lib.cards.length) { el.textContent = 'Lista de 1500 de cuvinte e inclusă'; return; }
     var d = lib.importedAt ? new Date(lib.importedAt) : null;
-    var when = d && !isNaN(d) ? ' · importat ' + d.toLocaleDateString('ro-RO', { day: 'numeric', month: 'short' }) : '';
-    el.textContent = plural(lib.cards.length) + when;
+    var when = d && !isNaN(d) ? ' · importate ' + d.toLocaleDateString('ro-RO', { day: 'numeric', month: 'short' }) : '';
+    el.textContent = '1500 de cuvinte + ' + plural(lib.cards.length) + ' ale tale' + when;
+  }
+
+  function selectFolder(id) {
+    prefs.folder = id; savePrefs(); session = null; $('search').value = '';
+    renderAll();
   }
 
   function renderChips() {
     var nav = $('chips');
     nav.textContent = '';
-    nav.hidden = lib.folders.length < 1;
+    nav.append(deckFolderItem(true));
     lib.folders.forEach(function (f) {
       var on = f.id === prefs.folder;
       nav.append(h('button', { type: 'button', class: 'chip' + (on ? ' on' : ''), 'aria-current': on ? 'true' : null,
-        onclick: function () { prefs.folder = f.id; savePrefs(); session = null; $('search').value = ''; renderAll(); } },
+        onclick: function () { selectFolder(f.id); } },
         f.name, h('span', { class: 'n', text: String(cardsIn(f.id).length) })));
     });
+  }
+  function renderFolders() { renderChips(); }
+
+  function renderHead() {
+    var box = $('folderHead');
+    box.textContent = '';
+    var f = curFolder();
+    if (f && f.deck) renderDeckHead(box);
   }
 
   /* ---------- tabs ---------- */
@@ -354,13 +522,15 @@ textarea { resize: vertical; min-height: 96px; }
   $('tabWords').addEventListener('click', function () { setTab('words'); });
 
   /* ---------- study ---------- */
-  var session = null;
-
   function startSession() {
+    var f = curFolder();
     var ids = cardsIn(prefs.folder).map(function (c) { return c.id; });
     if (prefs.shuffle) shuffle(ids);
-    session = { folder: prefs.folder, queue: ids, flipped: false, total: ids.length, again: 0 };
+    session = { folder: prefs.folder, day: f && f.deck ? curDay() : 0, queue: ids, flipped: false, total: ids.length, again: 0 };
   }
+
+  function isTyping() { return !!prefs.typing; }
+  function isRev() { return !!prefs.reverse && !prefs.typing; }
 
   function setFlipped(v) {
     if (!session) return;
@@ -371,10 +541,12 @@ textarea { resize: vertical; min-height: 96px; }
     var f = card.querySelector('.front'), b = card.querySelector('.back');
     if (f) f.setAttribute('aria-hidden', v ? 'true' : 'false');
     if (b) b.setAttribute('aria-hidden', v ? 'false' : 'true');
-    $('showBtn').hidden = v;
+    $('showBtn').hidden = v || isTyping();
     $('answerRow').hidden = !v;
+    var tb = $('typeBox'); if (tb) tb.hidden = v;
+    var rm = $('resultMsg'); if (rm && !v) rm.hidden = true;
     var wa = $('wordAudio'), sa = $('sentAudio');
-    if (wa) wa.hidden = !(v || prefs.reverse);
+    if (wa) wa.hidden = !(v || isRev());
     if (sa) sa.hidden = !v;
   }
 
@@ -383,42 +555,106 @@ textarea { resize: vertical; min-height: 96px; }
     var id = session.queue.shift();
     if (!known) { session.again++; session.queue.push(id); }
     session.flipped = false;
+    if (session.folder === DECK_ID && !session.queue.length) markDayDone(session.day);
     renderStudy();
   }
 
-  function importHint() {
-    return h('button', { type: 'button', class: 'btn primary', text: 'Importă biblioteca', onclick: function () { $('importPanel').hidden = false; $('importPanel').scrollIntoView({ block: 'nearest' }); } });
+  /* ---- typed answers ---- */
+  function cleanFr(s) {
+    return String(s || '').toLowerCase().replace(/[’‘`´]/g, "'").replace(/œ/g, 'oe').replace(/\s+/g, ' ').trim().replace(/[.!?,;:]+$/, '');
   }
+  function stripAcc(s) { return s.normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+  function answerVariants(back) {
+    var b = cleanFr(back), out = [b];
+    var m = b.replace(/^(le |la |les |l'|un |une |des |du |de la |de l'|d')/, '');
+    if (m && m !== b) out.push(m);
+    return out;
+  }
+  function gradeTyped(typed, back) {
+    var t = cleanFr(typed);
+    if (!t) return 'empty';
+    var vs = answerVariants(back), i;
+    for (i = 0; i < vs.length; i++) if (t === vs[i]) return 'ok';
+    var ts = stripAcc(t);
+    for (i = 0; i < vs.length; i++) if (ts === stripAcc(vs[i])) return 'near';
+    return 'bad';
+  }
+
+  function showResult(kind, c, typed) {
+    var el = $('resultMsg');
+    if (!el) return;
+    var msg, cls;
+    if (kind === 'ok') { msg = 'Corect!'; cls = 'ok'; }
+    else if (kind === 'near') { msg = 'Aproape, verifică accentele. Corect: ' + c.back; cls = 'near'; }
+    else if (kind === 'skip') { msg = 'Răspunsul: ' + c.back; cls = 'near'; }
+    else { msg = 'Ai scris „' + typed.trim() + '”. Corect: ' + c.back; cls = 'bad'; }
+    el.textContent = msg;
+    el.className = 'result ' + cls;
+    el.hidden = false;
+    setFlipped(true);
+  }
+
+  var ACCENTS = ['é', 'è', 'ê', 'ë', 'à', 'â', 'ç', 'ù', 'û', 'î', 'ï', 'ô', 'œ'];
+  function insertAccent(inp, ch) {
+    var s = inp.selectionStart == null ? inp.value.length : inp.selectionStart;
+    var e = inp.selectionEnd == null ? s : inp.selectionEnd;
+    inp.value = inp.value.slice(0, s) + ch + inp.value.slice(e);
+    var pos = s + ch.length;
+    inp.focus();
+    try { inp.setSelectionRange(pos, pos); } catch (err) { /* not supported */ }
+  }
+
+  function buildTypeBox(c) {
+    var inp = h('input', { type: 'text', id: 'typeInput', lang: 'fr', autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
+      enterkeyhint: 'done', placeholder: 'Scrie cuvântul în franceză', 'aria-label': 'Scrie cuvântul în franceză' });
+    var keys = h('div', { class: 'accents', role: 'group', 'aria-label': 'Litere cu accent' });
+    ACCENTS.forEach(function (ch) {
+      var b = h('button', { type: 'button', class: 'accent-key', text: ch, 'aria-label': 'Inserează ' + ch });
+      b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+      b.addEventListener('click', function () { insertAccent(inp, ch); });
+      keys.append(b);
+    });
+    return h('form', { class: 'type-form', id: 'typeBox', onsubmit: function (e) {
+      e.preventDefault();
+      var kind = gradeTyped(inp.value, c.back);
+      if (kind === 'empty') { inp.focus(); return; }
+      showResult(kind, c, inp.value);
+    } },
+      h('div', { class: 'type-row' }, inp, h('button', { type: 'submit', class: 'btn primary', text: 'Verifică' })),
+      keys,
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', text: 'Nu știu', onclick: function () { showResult('skip', c, ''); } })));
+  }
+
+  function restartSession() { startSession(); renderStudy(); }
 
   function renderStudy() {
     var box = $('studyView');
     box.textContent = '';
-    if (!lib.folders.length) {
-      box.append(h('div', { class: 'empty' }, h('strong', { text: 'Încă nu ai cuvinte aici' }),
-        h('p', { text: 'Importă copia de rezervă din Mes Mots (butonul „Copie de rezervă"). După aceea poți învăța și fără internet.' }),
-        importHint()));
-      return;
-    }
     var f = curFolder();
-    var cards = cardsIn(f.id);
-    if (!cards.length) {
-      box.append(h('div', { class: 'empty' }, h('strong', { text: 'Folderul e gol' }),
-        h('p', { text: 'Alege alt folder sau importă o copie de rezervă nouă.' })));
+    if (!f) { box.append(emptyFolderView(null)); return; }
+    if (f.deck && deckState !== 'ready') {
+      box.append(h('div', { class: 'empty' },
+        h('strong', { text: deckState === 'error' ? 'Lista nu s-a încărcat' : 'Se încarcă lista…' }),
+        deckState === 'error' ? h('p', { text: 'Verifică conexiunea la internet și reîncarcă pagina.' }) : null));
       return;
     }
-    if (!session || session.folder !== f.id) startSession();
+    var cards = cardsIn(f.id);
+    if (!cards.length) { box.append(emptyFolderView(f)); return; }
+    if (!session || session.folder !== f.id || (f.deck && session.day !== curDay())) startSession();
     session.queue = session.queue.filter(function (id) { return !!cardById(id); });
+    var typing = isTyping(), rev = isRev();
 
     if (!session.queue.length) {
+      var day = curDay(), more = f.deck && day < totalDays();
       box.append(h('div', { class: 'done' },
-        h('strong', { text: 'Gata, ai terminat folderul' }),
-        h('p', { text: 'Ai parcurs ' + plural(session.total) + '. Ai apăsat „Mai repet" de ' + session.again + (session.again === 1 ? ' dată.' : ' ori.') }),
-        h('button', { type: 'button', class: 'btn primary big', text: 'Începe din nou', onclick: function () { startSession(); renderStudy(); } })));
+        h('strong', { text: f.deck ? 'Gata, ai terminat ziua ' + session.day : 'Gata, ai terminat folderul' }),
+        h('p', { text: 'Ai parcurs ' + plural(session.total) + '. Ai apăsat „Mai repet” de ' + session.again + (session.again === 1 ? ' dată.' : ' ori.') }),
+        more ? h('button', { type: 'button', class: 'btn primary big', text: 'Treci la ziua ' + (day + 1), onclick: function () { setDay(day + 1); } }) : null,
+        h('button', { type: 'button', class: more ? 'btn' : 'btn primary big', text: f.deck ? 'Repetă ziua' : 'Începe din nou', onclick: restartSession })));
       return;
     }
 
     var c = cardById(session.queue[0]);
-    var rev = prefs.reverse;
     var front = h('div', { class: 'face front', 'aria-hidden': 'false' },
       h('span', { class: 'tag', text: rev ? 'Franceză' : 'Română / engleză' }),
       h('p', { class: 'big', text: rev ? c.back : c.front }),
@@ -430,8 +666,9 @@ textarea { resize: vertical; min-height: 96px; }
       c.example ? h('p', { class: 'example', lang: 'fr', text: c.example }) : null,
       c.example && c.exTr ? h('p', { class: 'ex-tr', text: c.exTr }) : null);
 
-    var card = h('button', { type: 'button', class: 'card', id: 'flipCard', 'aria-label': 'Întoarce cardul', onclick: function () { setFlipped(!session.flipped); } },
-      h('div', { class: 'card-inner' }, front, back));
+    var card = h('button', { type: 'button', class: 'card', id: 'flipCard', 'aria-label': 'Întoarce cardul', onclick: function () {
+      if (typing && !session.flipped) showResult('skip', c, ''); else setFlipped(!session.flipped);
+    } }, h('div', { class: 'card-inner' }, front, back));
 
     var showBtn = h('button', { type: 'button', class: 'btn primary big', id: 'showBtn', text: 'Arată răspunsul', onclick: function () { setFlipped(true); } });
     var answerRow = h('div', { class: 'actions', id: 'answerRow', hidden: true },
@@ -442,37 +679,57 @@ textarea { resize: vertical; min-height: 96px; }
       speakBtn('Ascultă cuvântul', c.back, 'wordAudio', false),
       c.example ? speakBtn('Ascultă propoziția', c.example, 'sentAudio', false) : null) : null;
 
-    var optRev = h('input', { type: 'checkbox', id: 'optRev', checked: rev ? true : null });
+    var optType = h('input', { type: 'checkbox', id: 'optType', checked: typing ? true : null });
+    optType.addEventListener('change', function () { prefs.typing = optType.checked; savePrefs(); renderStudy(); });
+    var optRev = h('input', { type: 'checkbox', id: 'optRev', checked: rev ? true : null, disabled: typing ? true : null });
     optRev.addEventListener('change', function () { prefs.reverse = optRev.checked; savePrefs(); renderStudy(); });
     var optShuf = h('input', { type: 'checkbox', id: 'optShuf', checked: prefs.shuffle ? true : null });
     optShuf.addEventListener('change', function () { prefs.shuffle = optShuf.checked; savePrefs(); startSession(); renderStudy(); });
 
     box.append(h('div', { class: 'study' },
-      h('p', { class: 'progress', text: 'Mai ai ' + plural(session.queue.length) + ' de văzut' }),
+      h('p', { class: 'progress', text: (f.deck ? 'Ziua ' + session.day + ' · mai ai ' : 'Mai ai ') + plural(session.queue.length) + ' de văzut' }),
       h('div', { class: 'card-wrap' }, card),
+      typing ? buildTypeBox(c) : null,
+      h('p', { id: 'resultMsg', class: 'result', role: 'status', hidden: true }),
       h('div', { class: 'actions' }, showBtn, answerRow),
       audioRow,
+      typing ? null : h('p', { class: 'hint', text: 'Space întoarce cardul. După răspuns: săgeată dreapta = Știam, stânga = Mai repet.' }),
       h('div', { class: 'opts' },
-        h('label', null, optRev, 'Începe cu franceza'),
-        h('label', null, optShuf, 'Amestecă cardurile'))));
+        h('label', null, optType, 'Scrie cuvântul în franceză'),
+        h('label', { class: typing ? 'off' : null }, optRev, 'Începe cu franceza'),
+        h('label', null, optShuf, 'Amestecă cardurile')),
+      f.deck ? h('p', { class: 'hint', text: 'Cuvintele vin din lista de frecvență lingvoberry.com/wordlist/fr. Traducerile, pronunția și exemplele sunt generate de Claude și pot conține greșeli.' }) : null));
     setFlipped(session.flipped);
+    if (typing && !session.flipped) {
+      setTimeout(function () {
+        var i = $('typeInput');
+        if (i) { try { i.focus({ preventScroll: true }); } catch (e) { i.focus(); } }
+      }, 0);
+    }
   }
 
   document.addEventListener('keydown', function (e) {
     if (prefs.tab === 'words' || !session || !session.queue.length) return;
     var t = e.target && e.target.tagName;
     if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || t === 'BUTTON') return;
-    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setFlipped(!session.flipped); }
+    if (!isTyping() && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); setFlipped(!session.flipped); }
     else if (e.key === 'ArrowRight' && session.flipped) answer(true);
     else if (e.key === 'ArrowLeft' && session.flipped) answer(false);
   });
+
+  function emptyFolderView(f) {
+    return h('div', { class: 'empty' }, h('strong', { text: 'Folderul e gol' }),
+      h('p', { text: 'Alege alt folder sau importă o copie de rezervă nouă.' }));
+  }
 
   /* ---------- word list ---------- */
   function renderWords() {
     var list = $('wordList'), empty = $('wordsEmpty');
     list.textContent = '';
     var f = curFolder();
-    if (!f) { empty.hidden = false; empty.textContent = 'Nu există cuvinte încă. Importă o copie de rezervă.'; $('search').hidden = true; return; }
+    if (!f) { empty.hidden = true; $('search').hidden = true; return; }
+    if (f.deck) { $('search').hidden = false; renderDeckWords(list, empty); return; }
+    $('search').placeholder = 'Caută în folder';
     var all = cardsIn(f.id);
     $('search').hidden = all.length < 2;
     var q = norm($('search').value.trim());
@@ -481,19 +738,7 @@ textarea { resize: vertical; min-height: 96px; }
       empty.hidden = false;
       empty.textContent = all.length ? 'Niciun cuvânt nu se potrivește cu căutarea.' : 'Folderul e gol.';
     } else empty.hidden = true;
-    shown.forEach(function (c) {
-      list.append(h('li', { class: 'word' },
-        h('div', { class: 'w-main' },
-          h('span', { class: 'w-front', text: c.front }),
-          h('span', { class: 'w-arrow', 'aria-hidden': 'true', text: '→' }),
-          h('span', { class: 'w-back', lang: 'fr', text: c.back }),
-          TTS_OK ? speakBtn('Ascultă cuvântul: ' + c.back, c.back, null, true) : null),
-        c.phon ? h('div', { class: 'w-phon', text: c.phon }) : null,
-        c.example ? h('div', { class: 'w-ex' },
-          h('span', { lang: 'fr', text: c.example }),
-          TTS_OK ? speakBtn('Ascultă propoziția', c.example, null, true) : null) : null,
-        c.example && c.exTr ? h('div', { class: 'w-trn', text: c.exTr }) : null));
-    });
+    shown.forEach(function (c) { list.append(wordLi(c, null)); });
   }
   $('search').addEventListener('input', renderWords);
 
@@ -566,10 +811,11 @@ textarea { resize: vertical; min-height: 96px; }
   });
 
   /* ---------- go ---------- */
-  function renderAll() { renderInfo(); renderChips(); renderTabs(); renderStudy(); renderWords(); }
+  function renderAll() { renderInfo(); renderChips(); renderHead(); renderTabs(); renderStudy(); renderWords(); }
 
   fixCurrent();
   renderAll();
+  loadDeck();
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () {
