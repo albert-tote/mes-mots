@@ -166,6 +166,24 @@ select { font: inherit; color: var(--ink); background: var(--surface); border: 1
 .result.near { border-color: var(--accent); }
 .result.bad { border-color: var(--warn); color: var(--warn); }
 .opts label.off { opacity: 0.5; cursor: default; }
+.prog-sum { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.stat { flex: 1 1 140px; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.stat strong { font-size: 1.75rem; font-variant-numeric: tabular-nums; }
+.stat strong.warn { color: var(--warn); }
+.stat span { color: var(--muted); font-size: 0.875rem; }
+.prog-sec { margin: 20px 0; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.prog-sec .word-list { align-self: stretch; }
+.prog-h { font-size: 1.0625rem; font-weight: 700; }
+.prog-h.ok { color: var(--ok); }
+.prog-h.warn { color: var(--warn); }
+.day-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; align-self: stretch; }
+.day-row { appearance: none; font: inherit; color: inherit; cursor: pointer; width: 100%; display: grid; grid-template-columns: 4.5rem minmax(0, 1fr) 3.2rem 6.2rem; gap: 10px; align-items: center; text-align: left; padding: 9px 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; font-variant-numeric: tabular-nums; }
+.day-row.on { border-color: var(--accent); }
+.day-row .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.day-row .fill { display: block; height: 100%; background: var(--ok); }
+.day-row .dc { text-align: right; font-weight: 600; }
+.day-row .dr { color: var(--warn); font-size: 0.8125rem; }
+@media (max-width: 420px) { .day-row { grid-template-columns: 3.8rem minmax(0, 1fr) 2.8rem; } .day-row .dr { grid-column: 1 / -1; } }
 
 @media (prefers-reduced-motion: reduce) { .card-inner { transition: none; } }
 </style>
@@ -208,9 +226,12 @@ select { font: inherit; color: var(--ink); background: var(--surface); border: 1
   <div class="tabs" role="tablist">
     <button type="button" class="tab" role="tab" id="tabStudy" aria-selected="true">Învață</button>
     <button type="button" class="tab" role="tab" id="tabWords" aria-selected="false">Cuvinte</button>
+  <button type="button" class="tab" role="tab" id="tabProgress" aria-selected="false">Progres</button>
   </div>
 
   <section id="studyView" aria-labelledby="tabStudy"></section>
+
+  <section id="progressView" class="progress-view" aria-labelledby="tabProgress" hidden></section>
 
   <section id="wordsView" class="words" aria-labelledby="tabWords" hidden>
     <input type="text" id="search" placeholder="Caută în folder" aria-label="Caută cuvinte" autocomplete="off">
@@ -282,6 +303,7 @@ select { font: inherit; color: var(--ink); background: var(--surface); border: 1
 
   /* ---------- built-in list: the 1500 most frequent words, 30 per day ---------- */
   var DECK_ID = '__deck1500', DAY_SIZE = 30, MAX_DAYS = 50;
+  var reviewMode = false;
   var DECK = null, deckMap = {}, deckState = 'loading';
   var DECK_FOLDER = { id: DECK_ID, name: 'Primele 1500 de cuvinte', deck: true };
 
@@ -336,6 +358,7 @@ select { font: inherit; color: var(--ink); background: var(--surface); border: 1
     var n = Math.min(Math.max(1, d), totalDays());
     getPlan().day = n;
     savePlan();
+    reviewMode = false;
     session = null;
     $('search').value = '';
     renderAll();
@@ -512,21 +535,115 @@ select { font: inherit; color: var(--ink); background: var(--surface); border: 1
   /* ---------- tabs ---------- */
   function setTab(t) { prefs.tab = t; savePrefs(); renderTabs(); if (t === 'study') renderStudy(); }
   function renderTabs() {
-    var study = prefs.tab !== 'words';
-    $('tabStudy').setAttribute('aria-selected', study ? 'true' : 'false');
-    $('tabWords').setAttribute('aria-selected', study ? 'false' : 'true');
-    $('studyView').hidden = !study;
-    $('wordsView').hidden = study;
+    var tab = prefs.tab === 'words' || prefs.tab === 'progress' ? prefs.tab : 'study';
+    $('tabStudy').setAttribute('aria-selected', tab === 'study' ? 'true' : 'false');
+    $('tabWords').setAttribute('aria-selected', tab === 'words' ? 'true' : 'false');
+    $('tabProgress').setAttribute('aria-selected', tab === 'progress' ? 'true' : 'false');
+    $('studyView').hidden = tab !== 'study';
+    $('wordsView').hidden = tab !== 'words';
+    $('progressView').hidden = tab !== 'progress';
+    if (tab === 'progress') renderProgress();
   }
   $('tabStudy').addEventListener('click', function () { setTab('study'); });
   $('tabWords').addEventListener('click', function () { setTab('words'); });
+  $('tabProgress').addEventListener('click', function () { setTab('progress'); });
+
+  /* ---------- progress: learned / to repeat / per day ---------- */
+  var progShow = { known: 30, again: 30 };
+
+  function stMap() {
+    var p = getPlan();
+    if (!p.st || typeof p.st !== 'object') p.st = {};
+    return p.st;
+  }
+  function recordAnswer(card, known) {
+    if (!card || !card.rank) return;
+    stMap()[card.rank] = known ? 1 : 2;
+    savePlan();
+  }
+  function dayStats(d) {
+    var st = stMap(), a = (d - 1) * DAY_SIZE + 1, b = Math.min(d * DAY_SIZE, DECK ? DECK.length : d * DAY_SIZE), k = 0, g = 0;
+    for (var r = a; r <= b; r++) { if (st[r] === 1) k++; else if (st[r] === 2) g++; }
+    return { known: k, again: g, total: b - a + 1 };
+  }
+  function ranksWith(v) {
+    var st = stMap(), out = [];
+    Object.keys(st).forEach(function (r) { if (st[r] === v) out.push(Number(r)); });
+    out.sort(function (x, y) { return x - y; });
+    return out;
+  }
+
+  function fillEl(pct) { var e = h('span', { class: 'fill' }); e.style.width = pct + '%'; return e; }
+
+  function progSection(title, key, ranks, hintText, cls) {
+    var sec = h('section', { class: 'prog-sec' });
+    sec.append(h('h3', { class: 'prog-h ' + cls, text: title + ' (' + ranks.length + ')' }));
+    if (!ranks.length) { sec.append(h('p', { class: 'hint', text: hintText })); return sec; }
+    var ul = h('ul', { class: 'word-list' });
+    ranks.slice(0, progShow[key]).forEach(function (r) {
+      var c = deckMap['d' + r];
+      if (c) ul.append(wordLi(c, null));
+    });
+    sec.append(ul);
+    if (ranks.length > progShow[key]) {
+      sec.append(h('button', { type: 'button', class: 'btn', text: 'Arată încă 30 (' + (ranks.length - progShow[key]) + ' rămase)',
+        onclick: function () { progShow[key] += 30; renderProgress(); } }));
+    }
+    return sec;
+  }
+
+  function renderProgress() {
+    var box = $('progressView');
+    if (!box) return;
+    box.textContent = '';
+    if (deckState !== 'ready') {
+      box.append(h('p', { class: 'hint', text: deckState === 'error' ? 'Lista nu s-a încărcat. Verifică conexiunea și reîncarcă pagina.' : 'Se încarcă lista…' }));
+      return;
+    }
+    var known = ranksWith(1), again = ranksWith(2), n = totalDays(), cur = curDay();
+    box.append(h('div', { class: 'prog-sum' },
+      h('div', { class: 'stat' }, h('strong', { text: String(known.length) }), h('span', { text: 'învățate din ' + DECK.length })),
+      h('div', { class: 'stat' }, h('strong', { class: 'warn', text: String(again.length) }), h('span', { text: 'de repetat' }))));
+
+    var days = h('section', { class: 'prog-sec' }, h('h3', { class: 'prog-h', text: 'Pe zile' }));
+    var ul = h('ul', { class: 'day-list' });
+    for (var d = 1; d <= n; d++) {
+      (function (d) {
+        var s = dayStats(d), pct = Math.round(100 * s.known / s.total);
+        var btn = h('button', { type: 'button', class: 'day-row' + (d === cur ? ' on' : ''), 'aria-label': 'Ziua ' + d + ': ' + s.known + ' din ' + s.total + ' învățate. Deschide ziua.',
+          onclick: function () { reviewMode = false; prefs.folder = DECK_ID; savePrefs(); getPlan().day = d; savePlan(); session = null; setTab('study'); renderAll(); } },
+          h('span', { class: 'dn', text: 'Ziua ' + d }),
+          h('span', { class: 'bar', 'aria-hidden': 'true' }, fillEl(pct)),
+          h('span', { class: 'dc', text: s.known + '/' + s.total }),
+          h('span', { class: 'dr', text: s.again ? s.again + ' de repetat' : '' }));
+        ul.append(h('li', null, btn));
+      })(d);
+    }
+    days.append(ul);
+    box.append(days);
+
+    if (again.length) {
+      box.append(h('button', { type: 'button', class: 'btn primary big', id: 'reviewBtn', text: 'Exersează cele ' + again.length + ' cuvinte de repetat',
+        onclick: function () { reviewMode = true; prefs.folder = DECK_ID; savePrefs(); session = null; setTab('study'); renderAll(); } }));
+    }
+    box.append(progSection('De repetat', 'again', again, 'Aici apar cuvintele la care ai apăsat „Mai repet” sau ai greșit.', 'warn'));
+    box.append(progSection('Învățate', 'known', known, 'Aici apar cuvintele la care ai apăsat „Știam”.', 'ok'));
+
+    var reset = h('button', { type: 'button', class: 'btn danger', text: 'Șterge tot progresul' });
+    reset.addEventListener('click', function () {
+      if (reset.dataset.sure !== '1') { reset.dataset.sure = '1'; reset.textContent = 'Sigur? Apasă încă o dată'; setTimeout(function () { reset.dataset.sure = ''; reset.textContent = 'Șterge tot progresul'; }, 4000); return; }
+      var p = getPlan(); p.st = {}; p.done = {}; savePlan(); session = null; renderAll();
+    });
+    box.append(h('p', { class: 'hint', text: 'Dacă la un cuvânt apeși mai întâi „Mai repet” și apoi „Știam”, el trece în „Învățate”. Contează ultimul răspuns.' }), reset);
+  }
 
   /* ---------- study ---------- */
   function startSession() {
     var f = curFolder();
-    var ids = cardsIn(prefs.folder).map(function (c) { return c.id; });
+    var review = !!(reviewMode && f && f.deck);
+    var ids = review ? ranksWith(2).map(function (r) { return 'd' + r; }) : cardsIn(prefs.folder).map(function (c) { return c.id; });
     if (prefs.shuffle) shuffle(ids);
-    session = { folder: prefs.folder, day: f && f.deck ? curDay() : 0, queue: ids, flipped: false, total: ids.length, again: 0 };
+    session = { folder: prefs.folder, day: f && f.deck ? curDay() : 0, queue: ids, flipped: false, total: ids.length, again: 0, review: review };
   }
 
   function isTyping() { return !!prefs.typing; }
@@ -553,9 +670,10 @@ select { font: inherit; color: var(--ink); background: var(--surface); border: 1
   function answer(known) {
     if (!session || !session.queue.length) return;
     var id = session.queue.shift();
+    if (session.folder === DECK_ID) recordAnswer(deckMap[id], known);
     if (!known) { session.again++; session.queue.push(id); }
     session.flipped = false;
-    if (session.folder === DECK_ID && !session.queue.length) markDayDone(session.day);
+    if (session.folder === DECK_ID && !session.review && !session.queue.length) markDayDone(session.day);
     renderStudy();
   }
 
@@ -640,10 +758,25 @@ select { font: inherit; color: var(--ink); background: var(--surface); border: 1
     }
     var cards = cardsIn(f.id);
     if (!cards.length) { box.append(emptyFolderView(f)); return; }
-    if (!session || session.folder !== f.id || (f.deck && session.day !== curDay())) startSession();
+    if (!session || session.folder !== f.id || !!session.review !== !!(reviewMode && f.deck) || (f.deck && !session.review && session.day !== curDay())) startSession();
     session.queue = session.queue.filter(function (id) { return !!cardById(id); });
     var typing = isTyping(), rev = isRev();
 
+    if (reviewMode && f.deck && !session.total) {
+      box.append(h('div', { class: 'done' },
+        h('strong', { text: 'Nu ai cuvinte de repetat' }),
+        h('p', { text: 'Când apeși „Mai repet” la un cuvânt, el apare aici.' }),
+        h('button', { type: 'button', class: 'btn primary big', text: 'Înapoi la ziua ' + curDay(), onclick: function () { reviewMode = false; session = null; renderAll(); } })));
+      return;
+    }
+    if (!session.queue.length && session.review) {
+      box.append(h('div', { class: 'done' },
+        h('strong', { text: 'Gata, ai repetat cuvintele' }),
+        h('p', { text: 'Ai parcurs ' + plural(session.total) + '. Ai apăsat „Mai repet” de ' + session.again + (session.again === 1 ? ' dată.' : ' ori.') }),
+        h('button', { type: 'button', class: 'btn primary big', text: 'Înapoi la ziua ' + curDay(), onclick: function () { reviewMode = false; session = null; renderAll(); } }),
+        h('button', { type: 'button', class: 'btn', text: 'Repetă din nou', onclick: restartSession })));
+      return;
+    }
     if (!session.queue.length) {
       var day = curDay(), more = f.deck && day < totalDays();
       box.append(h('div', { class: 'done' },
@@ -687,7 +820,7 @@ select { font: inherit; color: var(--ink); background: var(--surface); border: 1
     optShuf.addEventListener('change', function () { prefs.shuffle = optShuf.checked; savePrefs(); startSession(); renderStudy(); });
 
     box.append(h('div', { class: 'study' },
-      h('p', { class: 'progress', text: (f.deck ? 'Ziua ' + session.day + ' · mai ai ' : 'Mai ai ') + plural(session.queue.length) + ' de văzut' }),
+      h('p', { class: 'progress', text: (session.review ? 'Repetare · mai ai ' : f.deck ? 'Ziua ' + session.day + ' · mai ai ' : 'Mai ai ') + plural(session.queue.length) + ' de văzut' }),
       h('div', { class: 'card-wrap' }, card),
       typing ? buildTypeBox(c) : null,
       h('p', { id: 'resultMsg', class: 'result', role: 'status', hidden: true }),
@@ -709,7 +842,7 @@ select { font: inherit; color: var(--ink); background: var(--surface); border: 1
   }
 
   document.addEventListener('keydown', function (e) {
-    if (prefs.tab === 'words' || !session || !session.queue.length) return;
+    if ((prefs.tab || 'study') !== 'study' || !session || !session.queue.length) return;
     var t = e.target && e.target.tagName;
     if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || t === 'BUTTON') return;
     if (!isTyping() && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); setFlipped(!session.flipped); }

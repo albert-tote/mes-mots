@@ -1,5 +1,5 @@
 /* Keeps the app files on the phone so it opens without internet. Bump CACHE when the files change. */
-var CACHE = 'mes-mots-offline-v3';
+var CACHE = 'mes-mots-offline-v5';
 var FILES = ['./', 'index.html', 'deck.json', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
